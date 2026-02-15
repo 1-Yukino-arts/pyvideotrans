@@ -294,7 +294,13 @@ class DubbingSrt(BaseTask):
         self.precent = 100
         if Path(self.cfg.target_wav).is_file():
             # 移除末尾静音
-            tools.remove_silence_from_end(self.cfg.target_wav, is_start=False)
+            try:
+                tools.remove_silence_from_end(self.cfg.target_wav, is_start=False)
+            except Exception as e:
+                try:
+                    config.logger.warning('[Dubbing] remove_silence_from_end falhou, ignorado: %s', e)
+                except Exception:
+                    pass
             self._signal(text=f"{self.cfg.name}", type='succeed')
         try:
             if self.cfg.shound_del_name:
