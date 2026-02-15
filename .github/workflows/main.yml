@@ -19,6 +19,7 @@ jobs:
           pip install pyinstaller==6.3.0 wheel setuptools
           pip install pydub numpy soundfile requests tqdm pillow pyyaml psutil rich edge-tts
 
+            
             - name: Build with PyInstaller
         run: |
           pyinstaller --clean --noconfirm sp.spec
