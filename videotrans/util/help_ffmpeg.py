@@ -7,7 +7,7 @@ import sys
 import time
 from pathlib import Path
 from typing import Union,Tuple,List,Dict
-
+from videotrans.util.tools import runffmpeg
 from videotrans.configure import config
 
 def extract_concise_error(stderr_text: str, max_lines=3, max_length=250) -> str:
