@@ -4,6 +4,7 @@ on: [push]
 jobs:
   pyinstaller-build:
     runs-on: windows-latest
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -11,21 +12,22 @@ jobs:
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.10'
+          python-version: "3.10"
 
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install pyinstaller==6.3.0 wheel setuptools
+          pip install wheel setuptools
+          pip install pyinstaller==6.3.0 pyinstaller-hooks-contrib
+          pip install PySide6
           pip install pydub numpy soundfile requests tqdm pillow pyyaml psutil rich edge-tts
 
-      - name: Build EXE
+      - name: Build EXE (one-folder, Qt safe)
         run: |
-          pyinstaller --clean --noconfirm --onefile --windowed --name sp sp.py
+          pyinstaller --clean --noconfirm --windowed --name sp sp.py
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: sp1.5
-          path: dist/sp.exe
- 
+          path: dist/sp/**
