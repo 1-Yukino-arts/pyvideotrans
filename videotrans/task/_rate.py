@@ -694,19 +694,64 @@ class SpeedRate:
                     .export(path, format="wav")
         return path
 
-    def _exec_concat_audio(self, file_list):
-        if not file_list: return
-        
+        def _exec_concat_audio(self, file_list):
+        if not file_list:
+            return
+
         concat_txt = Path(self.cache_folder, 'final_audio_concat.txt').as_posix()
         tools.create_concat_txt(file_list, concat_txt=concat_txt)
-        
+
+        # 先把所有片段“解码后”合成为一个真正的 PCM WAV（可被 pydub/ffmpeg 稳定解码）
         temp_wav = Path(self.cache_folder, 'final_audio_temp.wav').as_posix()
-        # 强制使用 cache_folder 作为 cwd，避免相对路径问题
-        cmd = ['-y', '-f', 'concat', '-safe', '0', '-i', concat_txt, '-c:a', 'copy', temp_wav]
+        cmd = [
+            '-y',
+            '-f', 'concat', '-safe', '0',
+            '-i', concat_txt,
+            '-ac', str(self.AUDIO_CHANNELS),
+            '-ar', str(self.AUDIO_SAMPLE_RATE),
+            '-c:a', 'pcm_s16le',
+            temp_wav
+        ]
         tools.runffmpeg(cmd, force_cpu=True, cmd_dir=self.cache_folder)
-        
-        if Path(temp_wav).exists():
-            shutil.move(temp_wav, self.target_audio)
-            config.logger.debug(f"[Audio-Concat] 最终音频已生成: {self.target_audio}")
+
+        if (not Path(temp_wav).exists()) or Path(temp_wav).stat().st_size < 4096:
+            config.logger.error("[Audio-Concat] 最终音频生成失败（temp wav 不存在或为空）")
+            return
+
+        out = self.target_audio
+        ext = Path(out).suffix.lower()
+
+        # 用户选择 wav：直接输出
+        if ext == '.wav':
+            shutil.move(temp_wav, out)
+            config.logger.debug(f"[Audio-Concat] 最终音频已生成: {out}")
+            return
+
+        # 用户选择 m4a/mp3：从 wav 进行真实转码（禁止用 copy/改后缀）
+        try:
+            if ext in ['.m4a', '.mp4a']:
+                tools.runffmpeg(
+                    ['-y', '-i', temp_wav, '-c:a', 'aac', '-b:a', '192k', out],
+                    force_cpu=True, cmd_dir=self.cache_folder
+                )
+            elif ext == '.mp3':
+                tools.runffmpeg(
+                    ['-y', '-i', temp_wav, '-c:a', 'libmp3lame', '-b:a', '192k', out],
+                    force_cpu=True, cmd_dir=self.cache_folder
+                )
+            else:
+                # 兜底：未知格式就保留 wav 输出到目标路径
+                shutil.move(temp_wav, out)
+                config.logger.debug(f"[Audio-Concat] 未知扩展名，按原样输出: {out}")
+                return
+        finally:
+            # 清理临时文件
+            try:
+                Path(temp_wav).unlink(missing_ok=True)
+            except Exception:
+                pass
+
+        if Path(out).exists() and Path(out).stat().st_size >= 4096:
+            config.logger.debug(f"[Audio-Concat] 最终音频已生成: {out}")
         else:
-            config.logger.error("[Audio-Concat] 最终音频生成失败")
+            config.logger.error("[Audio-Concat] 最终音频生成失败（转码输出为空）")
