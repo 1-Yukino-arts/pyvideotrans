@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import List, Optional
 
 from videotrans import tts
+from videotrans import config
 from videotrans.configure import config
 from videotrans.configure.config import tr
 from videotrans.task._base import BaseTask
