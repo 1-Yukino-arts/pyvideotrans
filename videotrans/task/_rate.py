@@ -67,6 +67,7 @@
 """
 
 import math
+import time
 import json
 import os
 import shutil
@@ -89,10 +90,12 @@ try:
 except ImportError:
     HAS_RUBBERBAND = False
 
+from videotrans import config
 from videotrans.configure import config
 from videotrans.configure.config import tr
 from videotrans.process.signelobj import GlobalProcessManager
 from videotrans.util import tools
+from videotrans.util.tools import runffmpeg
 
 
 def _cut_video_get_duration(i, task, novoice_mp4_original, preset, crf):
