@@ -957,54 +957,136 @@ def remove_silence_wav(audio_file):
 
 
 # input_file_path 可能是字符串：文件路径，也可能是音频数据
-def remove_silence_from_end(input_file_path,is_start=True):
+def remove_silence_from_end(input_file_path, is_start=True):
+    """
+    安全地移除音频末尾静音（不影响正常音频时长/速度逻辑）。
+
+    重要：任何解码失败（例如 m4a 缺失 moov atom、文件被中断写入、扩展名与真实格式不符等）
+    都不应该让整个任务崩溃——此函数在失败时会直接返回原路径/原音频对象。
+    """
     from pydub import AudioSegment
     from pydub.silence import detect_nonsilent
+    from pydub.exceptions import CouldntDecodeError
 
-    # Load the audio file
-    format = "wav"
+    def _sniff_fmt(p: Path, ext_lower: str) -> str:
+        """根据文件头粗略判断真实格式，解决 'wav 被当成 m4a/mp3' 之类的问题。"""
+        try:
+            with p.open('rb') as f:
+                head = f.read(12)
+            # WAV: RIFF....WAVE
+            if len(head) >= 12 and head[0:4] == b'RIFF' and head[8:12] == b'WAVE':
+                return 'wav'
+            # MP3: ID3 or frame sync
+            if len(head) >= 3 and head[0:3] == b'ID3':
+                return 'mp3'
+            if len(head) >= 2 and head[0] == 0xFF and (head[1] & 0xE0) == 0xE0:
+                return 'mp3'
+            # MP4 family: ....ftyp
+            if len(head) >= 8 and head[4:8] == b'ftyp':
+                return 'mp4'
+        except Exception:
+            pass
+
+        # 兜底：按扩展名判断
+        if ext_lower in ['m4a', 'mp4a', 'mp4']:
+            return 'mp4'
+        if ext_lower in ['wav', 'mp3']:
+            return ext_lower
+        return ext_lower or 'wav'
+
+    # 1) 输入是路径：尽量稳健读取
     if isinstance(input_file_path, str):
-        format = input_file_path.split('.')[-1].lower()
-        if format in ['wav', 'mp3', 'm4a']:
-            audio = AudioSegment.from_file(input_file_path, format=format if format in ['wav', 'mp3'] else 'mp4')
-        else:
-            # 转为mp3
+        p = Path(input_file_path)
+        if (not p.exists()) or p.stat().st_size < 4096:
+            return input_file_path
+
+        ext = p.suffix.lower().lstrip('.')
+        read_fmt = _sniff_fmt(p, ext)
+
+        # pydub 对 m4a 需要用 mp4
+        if read_fmt in ['m4a', 'mp4a', 'mp4']:
+            read_fmt = 'mp4'
+
+        # 允许短重试：文件刚生成时可能尚未写完 moov atom
+        audio = None
+        last_err = None
+        for _ in range(3):
             try:
-                runffmpeg(['-y', '-i', input_file_path, input_file_path + ".mp3"])
-                audio = AudioSegment.from_file(input_file_path + ".mp3", format="mp3")
+                audio = AudioSegment.from_file(str(p), format=read_fmt)
+                last_err = None
+                break
+            except CouldntDecodeError as e:
+                last_err = e
+                # 若是 mp4/m4a 常见的 moov atom not found，等一小下再试
+                try:
+                    # 如果文件很新，可能还在写入
+                    if (time.time() - p.stat().st_mtime) < 5:
+                        time.sleep(0.3)
+                        continue
+                except Exception:
+                    pass
+                break
+            except Exception as e:
+                last_err = e
+                break
+
+        if audio is None:
+            # 解码失败则直接返回原文件，不中断任务
+            try:
+                config.logger.warning(f"[remove_silence_from_end] 解码失败，跳过剪切: {p.name} ({last_err})")
             except Exception:
-                return input_file_path
+                pass
+            return input_file_path
 
-    else:
-        audio = input_file_path
+        # 2) 检测非静音片段（末尾）
+        nonsilent_chunks = detect_nonsilent(
+            audio,
+            min_silence_len=10,
+            silence_thresh=audio.dBFS - 20
+        )
+        if not nonsilent_chunks:
+            return input_file_path
 
-    # Detect non-silent chunks
+        # 末尾非静音结束点
+        _, end_index = nonsilent_chunks[-1]
+        trimmed_audio = audio[:end_index]
+
+        # 3) 导出：按“期望的扩展名”写回（修复扩展名与真实格式不符的情况）
+        try:
+            if ext in ['wav', 'mp3']:
+                trimmed_audio.export(str(p), format=ext)
+            elif ext in ['m4a', 'mp4a', 'mp4']:
+                trimmed_audio.export(str(p), format='mp4')
+            else:
+                # 不支持的直接尝试转 mp3 再覆盖回去
+                tmp_mp3 = str(p) + ".mp3"
+                trimmed_audio.export(tmp_mp3, format="mp3")
+                runffmpeg(['-y', '-i', tmp_mp3, str(p)])
+                try:
+                    Path(tmp_mp3).unlink(missing_ok=True)
+                except Exception:
+                    pass
+        except Exception as e:
+            try:
+                config.logger.warning(f"[remove_silence_from_end] 导出失败，跳过剪切: {p.name} ({e})")
+            except Exception:
+                pass
+            return input_file_path
+
+        return input_file_path
+
+    # 4) 输入是 AudioSegment：直接处理并返回
+    audio = input_file_path
     nonsilent_chunks = detect_nonsilent(
         audio,
         min_silence_len=10,
         silence_thresh=audio.dBFS - 20
     )
-
-    # If we have nonsilent chunks, get the start and end of the last nonsilent chunk
-    if nonsilent_chunks:
-        start_index, end_index = nonsilent_chunks[-1]
-    else:
-        # If the whole audio is silent, just return it as is
+    if not nonsilent_chunks:
         return input_file_path
 
-    # Remove the silence from the end by slicing the audio segment
-    trimmed_audio = audio[:end_index]
-    if isinstance(input_file_path, str):
-        if format in ['wav', 'mp3', 'm4a']:
-            trimmed_audio.export(input_file_path, format=format if format in ['wav', 'mp3'] else 'mp4')
-            return input_file_path
-        try:
-            trimmed_audio.export(input_file_path + ".mp3", format="mp3")
-            runffmpeg(['-y', '-i', input_file_path + ".mp3", input_file_path])
-        except Exception:
-            pass
-        return input_file_path
-    return trimmed_audio
+    _, end_index = nonsilent_chunks[-1]
+    return audio[:end_index]
 
 
 def format_video(name, target_dir=None):
