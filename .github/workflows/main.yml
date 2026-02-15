@@ -19,27 +19,12 @@ jobs:
           pip install pyinstaller==6.3.0 wheel setuptools
           pip install pydub numpy soundfile requests tqdm pillow pyyaml psutil rich edge-tts
 
-      - name: Find spec and build
-        shell: pwsh
+      - name: Build EXE
         run: |
-          Write-Host "== Repo root =="
-          Get-ChildItem -Force
-
-          Write-Host "== Searching for .spec files (recursive) =="
-          $spec = Get-ChildItem -Recurse -Filter *.spec | Select-Object -First 1
-
-          if (-not $spec) {
-            throw "Nenhum arquivo .spec encontrado no repositório."
-          }
-
-          Write-Host "Using spec: $($spec.FullName)"
-          pyinstaller --clean --noconfirm "$($spec.FullName)"
-
-          Write-Host "== dist contents =="
-          if (Test-Path "dist") { Get-ChildItem -Recurse "dist" } else { Write-Host "dist/ não existe" }
+          pyinstaller --clean --noconfirm --onefile --windowed --name sp sp.py
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: sp1.5
-          path: dist/**
+          path: dist/sp.exe
