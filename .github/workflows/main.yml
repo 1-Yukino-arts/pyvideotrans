@@ -1,15 +1,31 @@
 name: Compile Python
 on: [push]
+
 jobs:
   pyinstaller-build:
     runs-on: windows-latest
     steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Choose requirements file
+        shell: pwsh
+        run: |
+          if (Test-Path "requirements-win-gpu.txt") {
+            "REQ_FILE=requirements-win-gpu.txt" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          } elseif (Test-Path "requirements.txt") {
+            "REQ_FILE=requirements.txt" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          } else {
+            Write-Error "Nenhum requirements encontrado (requirements-win-gpu.txt ou requirements.txt)."
+            exit 1
+          }
+
       - name: Versatile PyInstaller
-        uses: sayyid5416/pyinstaller@v1.6.0    
-        with: 
-         python_ver: '3.10'
-         pyinstaller_ver: '==6.3.0'
-         spec: 'sp.spec'
-         requirements: 'requirements-win-gpu.txt'
-         upload_exe_with_name: 'sp1.5'
-         options: --name "sp"--windowed
+        uses: sayyid5416/pyinstaller@v1.6.0
+        with:
+          python_ver: '3.10'
+          pyinstaller_ver: '==6.3.0'
+          spec: 'sp.spec'
+          requirements: ${{ env.REQ_FILE }}
+          upload_exe_with_name: 'sp1.5'
+          options: --name "sp" --windowed
